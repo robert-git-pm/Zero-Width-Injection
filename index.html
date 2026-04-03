@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zero-Width Text Tool</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --card: #111827;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #22c55e;
+      --border: #374151;
+    }
+    body {
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 0;
+      background: linear-gradient(160deg, #020617, #111827);
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .card {
+      width: min(900px, 100%);
+      background: color-mix(in srgb, var(--card) 90%, black);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 1.35rem;
+    }
+    p {
+      color: var(--muted);
+      margin-top: 0;
+    }
+    .field {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    label {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    textarea {
+      width: 100%;
+      min-height: 80px;
+      resize: vertical;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--text);
+      background: #0b1222;
+      box-sizing: border-box;
+    }
+    textarea[readonly] {
+      cursor: copy;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 9px 14px;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: #052e16;
+    }
+    .subtle {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .ok {
+      color: #86efac;
+      font-size: 0.9rem;
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Zero-Width Combine & Inspect Tool</h1>
+    <p>Create text with hidden zero-width payload and verify by pasting it back.</p>
+
+    <div class="field">
+      <label for="visible">1) Printable Text</label>
+      <textarea id="visible" placeholder="Enter visible text..."></textarea>
+    </div>
+
+    <div class="field">
+      <label for="hidden">2) Hidden Text</label>
+      <textarea id="hidden" placeholder="Enter hidden text..."></textarea>
+    </div>
+
+    <div class="field">
+      <label for="combined">3) Generated combined text (copy only)</label>
+      <textarea id="combined" readonly placeholder="Generated automatically..."></textarea>
+      <div class="actions">
+        <button id="copyCombined" type="button">Copy combined text</button>
+      </div>
+      <div id="copyState" class="ok"></div>
+      <div class="subtle">Payload is appended using zero-width Unicode characters.</div>
+    </div>
+
+    <div class="field">
+      <label for="pasted">4) Verification input (paste text here)</label>
+      <textarea id="pasted" placeholder="Paste copied text here..."></textarea>
+    </div>
+
+    <div class="field">
+      <label for="extracted">5) Extracted Hidden Text (from field 4)</label>
+      <textarea id="extracted" readonly placeholder="Extracted hidden text appears here..."></textarea>
+    </div>
+  </main>
+
+  <script>
+    // Umpox-compatible zero-width alphabet.
+    const ONE = "\u200B"; // Zero Width Space => bit 1
+    const ZERO = "\u200C"; // Zero Width Non-Joiner => bit 0
+    const SPACE = "\u200D"; // Zero Width Joiner => binary byte delimiter
+    const SEP = "\uFEFF"; // Zero Width No-Break Space => token separator
+
+    const visibleEl = document.getElementById("visible");
+    const hiddenEl = document.getElementById("hidden");
+    const combinedEl = document.getElementById("combined");
+    const pastedEl = document.getElementById("pasted");
+    const extractedEl = document.getElementById("extracted");
+    const copyButton = document.getElementById("copyCombined");
+    const copyState = document.getElementById("copyState");
+
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    function textToBinaryWithSpaces(text) {
+      return Array.from(encoder.encode(text))
+        .map((byte) => byte.toString(2).padStart(8, "0"))
+        .join(" ");
+    }
+
+    function binaryToText(binaryText) {
+      const bytes = binaryText
+        .split(" ")
+        .filter(Boolean)
+        .map((chunk) => Number.parseInt(chunk, 2))
+        .filter((num) => Number.isInteger(num) && num >= 0 && num <= 255);
+
+      if (!bytes.length) return "";
+      try {
+        return decoder.decode(new Uint8Array(bytes));
+      } catch {
+        return "";
+      }
+    }
+
+    function encodeHiddenText(hiddenText) {
+      const binary = textToBinaryWithSpaces(hiddenText);
+      return binary
+        .split("")
+        .map((char) => {
+          if (char === "1") return ONE;
+          if (char === "0") return ZERO;
+          return SPACE;
+        })
+        .join(SEP);
+    }
+
+    function decodeWithSeparator(encoded) {
+      const maybeTokens = encoded
+        .split("")
+        .filter((char) => char === ONE || char === ZERO || char === SPACE || char === SEP)
+        .join("")
+        .split(SEP);
+
+      if (!maybeTokens.length) return "";
+
+      const binary = maybeTokens
+        .map((token) => {
+          // Compatibility: in umpox implementation, an empty token can represent bit 1.
+          if (token === "" || token === ONE) return "1";
+          if (token === ZERO) return "0";
+          if (token === SPACE) return " ";
+          return "";
+        })
+        .join("");
+
+      if (!binary.includes("0") && !binary.includes("1")) return "";
+      return binaryToText(binary);
+    }
+
+    function decodeWithoutSeparatorFallback(encoded) {
+      // Fallback when a platform strips separators/markers but keeps 200B/200C.
+      const bits = encoded
+        .split("")
+        .filter((char) => char === ONE || char === ZERO)
+        .map((char) => (char === ONE ? "1" : "0"))
+        .join("");
+
+      const fullBytes = Math.floor(bits.length / 8) * 8;
+      if (!fullBytes) return "";
+
+      const binary = Array.from({ length: fullBytes / 8 }, (_, i) => bits.slice(i * 8, i * 8 + 8)).join(" ");
+      return binaryToText(binary);
+    }
+
+    function decodeHiddenText(text) {
+      return decodeWithSeparator(text) || decodeWithoutSeparatorFallback(text);
+    }
+
+    function buildCombined() {
+      combinedEl.value = visibleEl.value + encodeHiddenText(hiddenEl.value);
+      copyState.textContent = "";
+    }
+
+    async function copyCombined() {
+      try {
+        await navigator.clipboard.writeText(combinedEl.value);
+        copyState.textContent = "Copied ✅";
+      } catch {
+        copyState.textContent = "Copy failed (clipboard permission missing).";
+      }
+    }
+
+    function extractFromPasted() {
+      extractedEl.value = decodeHiddenText(pastedEl.value);
+    }
+
+    visibleEl.addEventListener("input", buildCombined);
+    hiddenEl.addEventListener("input", buildCombined);
+    pastedEl.addEventListener("input", extractFromPasted);
+    copyButton.addEventListener("click", copyCombined);
+
+    buildCombined();
+  </script>
+</body>
+</html>
