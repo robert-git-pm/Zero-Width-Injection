@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,7 +7,6 @@
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #0f172a;
       --card: #111827;
       --text: #e5e7eb;
       --muted: #9ca3af;
@@ -92,44 +91,46 @@
 </head>
 <body>
   <main class="card">
-    <h1>Zero-Width Kombinations-Tool</h1>
-    <p>Erzeugt Text mit unsichtbarem Anteil (Zero-Width-Zeichen) und kann ihn wieder auslesen.</p>
+    <h1>Zero-Width Combine & Inspect Tool</h1>
+    <p>Create text with hidden zero-width payload and verify by pasting it back.</p>
 
     <div class="field">
-      <label for="visible">1) Printable Text (sichtbar)</label>
-      <textarea id="visible" placeholder="Sichtbaren Text eingeben..."></textarea>
+      <label for="visible">1) Printable Text</label>
+      <textarea id="visible" placeholder="Enter visible text..."></textarea>
     </div>
 
     <div class="field">
-      <label for="hidden">2) Hidden Text (unsichtbar)</label>
-      <textarea id="hidden" placeholder="Unsichtbaren Text eingeben..."></textarea>
+      <label for="hidden">2) Hidden Text</label>
+      <textarea id="hidden" placeholder="Enter hidden text..."></textarea>
     </div>
 
     <div class="field">
-      <label for="combined">3) Generierter, kombinierter Text (nur kopieren)</label>
-      <textarea id="combined" readonly placeholder="Wird automatisch generiert..."></textarea>
+      <label for="combined">3) Generated combined text (copy only)</label>
+      <textarea id="combined" readonly placeholder="Generated automatically..."></textarea>
       <div class="actions">
-        <button id="copyCombined" type="button">Kombinierten Text kopieren</button>
+        <button id="copyCombined" type="button">Copy combined text</button>
       </div>
       <div id="copyState" class="ok"></div>
-      <div class="subtle">Hinweis: Die unsichtbaren Daten hängen am Ende des sichtbaren Texts.</div>
+      <div class="subtle">Payload is appended using zero-width Unicode characters.</div>
     </div>
 
     <div class="field">
-      <label for="pasted">4) Kontrolleingabe (hier Text einfügen)</label>
-      <textarea id="pasted" placeholder="Hier den kopierten Text wieder einfügen..."></textarea>
+      <label for="pasted">4) Verification input (paste text here)</label>
+      <textarea id="pasted" placeholder="Paste copied text here..."></textarea>
     </div>
 
     <div class="field">
-      <label for="extracted">5) Aus Feld 4 extrahierter Hidden Text</label>
-      <textarea id="extracted" readonly placeholder="Extrahierter unsichtbarer Text erscheint hier..."></textarea>
+      <label for="extracted">5) Extracted Hidden Text (from field 4)</label>
+      <textarea id="extracted" readonly placeholder="Extracted hidden text appears here..."></textarea>
     </div>
   </main>
 
   <script>
-    const ZW0 = "\u200B"; // Zero Width Space
-    const ZW1 = "\u200C"; // Zero Width Non-Joiner
-    const MARKER = "\u200D\u2060\u200D"; // Marker für Beginn des Hidden-Blocks
+    // Umpox-compatible zero-width alphabet.
+    const ONE = "\u200B"; // Zero Width Space => bit 1
+    const ZERO = "\u200C"; // Zero Width Non-Joiner => bit 0
+    const SPACE = "\u200D"; // Zero Width Joiner => binary byte delimiter
+    const SEP = "\uFEFF"; // Zero Width No-Break Space => token separator
 
     const visibleEl = document.getElementById("visible");
     const hiddenEl = document.getElementById("hidden");
@@ -142,36 +143,20 @@
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
 
-    function encodeHiddenText(hiddenText) {
-      const bytes = encoder.encode(hiddenText);
-      let bits = "";
-      for (const byte of bytes) {
-        bits += byte.toString(2).padStart(8, "0");
-      }
-      let zeroWidth = "";
-      for (const bit of bits) {
-        zeroWidth += bit === "0" ? ZW0 : ZW1;
-      }
-      return MARKER + zeroWidth;
+    function textToBinaryWithSpaces(text) {
+      return Array.from(encoder.encode(text))
+        .map((byte) => byte.toString(2).padStart(8, "0"))
+        .join(" ");
     }
 
-    function decodeHiddenText(text) {
-      const markerIndex = text.indexOf(MARKER);
-      if (markerIndex < 0) return "";
+    function binaryToText(binaryText) {
+      const bytes = binaryText
+        .split(" ")
+        .filter(Boolean)
+        .map((chunk) => Number.parseInt(chunk, 2))
+        .filter((num) => Number.isInteger(num) && num >= 0 && num <= 255);
 
-      const encodedPart = text.slice(markerIndex + MARKER.length);
-      const bitChars = Array.from(encodedPart).filter((ch) => ch === ZW0 || ch === ZW1);
-      if (!bitChars.length) return "";
-
-      const bitString = bitChars.map((ch) => (ch === ZW0 ? "0" : "1")).join("");
-      const fullBytesLength = Math.floor(bitString.length / 8) * 8;
-      const cleanBitString = bitString.slice(0, fullBytesLength);
-
-      const bytes = [];
-      for (let i = 0; i < cleanBitString.length; i += 8) {
-        bytes.push(Number.parseInt(cleanBitString.slice(i, i + 8), 2));
-      }
-
+      if (!bytes.length) return "";
       try {
         return decoder.decode(new Uint8Array(bytes));
       } catch {
@@ -179,19 +164,71 @@
       }
     }
 
+    function encodeHiddenText(hiddenText) {
+      const binary = textToBinaryWithSpaces(hiddenText);
+      return binary
+        .split("")
+        .map((char) => {
+          if (char === "1") return ONE;
+          if (char === "0") return ZERO;
+          return SPACE;
+        })
+        .join(SEP);
+    }
+
+    function decodeWithSeparator(encoded) {
+      const maybeTokens = encoded
+        .split("")
+        .filter((char) => char === ONE || char === ZERO || char === SPACE || char === SEP)
+        .join("")
+        .split(SEP);
+
+      if (!maybeTokens.length) return "";
+
+      const binary = maybeTokens
+        .map((token) => {
+          // Compatibility: in umpox implementation, an empty token can represent bit 1.
+          if (token === "" || token === ONE) return "1";
+          if (token === ZERO) return "0";
+          if (token === SPACE) return " ";
+          return "";
+        })
+        .join("");
+
+      if (!binary.includes("0") && !binary.includes("1")) return "";
+      return binaryToText(binary);
+    }
+
+    function decodeWithoutSeparatorFallback(encoded) {
+      // Fallback when a platform strips separators/markers but keeps 200B/200C.
+      const bits = encoded
+        .split("")
+        .filter((char) => char === ONE || char === ZERO)
+        .map((char) => (char === ONE ? "1" : "0"))
+        .join("");
+
+      const fullBytes = Math.floor(bits.length / 8) * 8;
+      if (!fullBytes) return "";
+
+      const binary = Array.from({ length: fullBytes / 8 }, (_, i) => bits.slice(i * 8, i * 8 + 8)).join(" ");
+      return binaryToText(binary);
+    }
+
+    function decodeHiddenText(text) {
+      return decodeWithSeparator(text) || decodeWithoutSeparatorFallback(text);
+    }
+
     function buildCombined() {
-      const visible = visibleEl.value;
-      const hidden = hiddenEl.value;
-      combinedEl.value = visible + encodeHiddenText(hidden);
+      combinedEl.value = visibleEl.value + encodeHiddenText(hiddenEl.value);
       copyState.textContent = "";
     }
 
     async function copyCombined() {
       try {
         await navigator.clipboard.writeText(combinedEl.value);
-        copyState.textContent = "Kopiert ✅";
+        copyState.textContent = "Copied ✅";
       } catch {
-        copyState.textContent = "Kopieren nicht möglich (Clipboard-Berechtigung fehlt).";
+        copyState.textContent = "Copy failed (clipboard permission missing).";
       }
     }
 
