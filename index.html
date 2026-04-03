@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zero-Width Text Tool</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f172a;
+      --card: #111827;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #22c55e;
+      --border: #374151;
+    }
+    body {
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 0;
+      background: linear-gradient(160deg, #020617, #111827);
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .card {
+      width: min(900px, 100%);
+      background: color-mix(in srgb, var(--card) 90%, black);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 1.35rem;
+    }
+    p {
+      color: var(--muted);
+      margin-top: 0;
+    }
+    .field {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    label {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    textarea {
+      width: 100%;
+      min-height: 80px;
+      resize: vertical;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--text);
+      background: #0b1222;
+      box-sizing: border-box;
+    }
+    textarea[readonly] {
+      cursor: copy;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 9px 14px;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: #052e16;
+    }
+    .subtle {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .ok {
+      color: #86efac;
+      font-size: 0.9rem;
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Zero-Width Kombinations-Tool</h1>
+    <p>Erzeugt Text mit unsichtbarem Anteil (Zero-Width-Zeichen) und kann ihn wieder auslesen.</p>
+
+    <div class="field">
+      <label for="visible">1) Printable Text (sichtbar)</label>
+      <textarea id="visible" placeholder="Sichtbaren Text eingeben..."></textarea>
+    </div>
+
+    <div class="field">
+      <label for="hidden">2) Hidden Text (unsichtbar)</label>
+      <textarea id="hidden" placeholder="Unsichtbaren Text eingeben..."></textarea>
+    </div>
+
+    <div class="field">
+      <label for="combined">3) Generierter, kombinierter Text (nur kopieren)</label>
+      <textarea id="combined" readonly placeholder="Wird automatisch generiert..."></textarea>
+      <div class="actions">
+        <button id="copyCombined" type="button">Kombinierten Text kopieren</button>
+      </div>
+      <div id="copyState" class="ok"></div>
+      <div class="subtle">Hinweis: Die unsichtbaren Daten hängen am Ende des sichtbaren Texts.</div>
+    </div>
+
+    <div class="field">
+      <label for="pasted">4) Kontrolleingabe (hier Text einfügen)</label>
+      <textarea id="pasted" placeholder="Hier den kopierten Text wieder einfügen..."></textarea>
+    </div>
+
+    <div class="field">
+      <label for="extracted">5) Aus Feld 4 extrahierter Hidden Text</label>
+      <textarea id="extracted" readonly placeholder="Extrahierter unsichtbarer Text erscheint hier..."></textarea>
+    </div>
+  </main>
+
+  <script>
+    const ZW0 = "\u200B"; // Zero Width Space
+    const ZW1 = "\u200C"; // Zero Width Non-Joiner
+    const MARKER = "\u200D\u2060\u200D"; // Marker für Beginn des Hidden-Blocks
+
+    const visibleEl = document.getElementById("visible");
+    const hiddenEl = document.getElementById("hidden");
+    const combinedEl = document.getElementById("combined");
+    const pastedEl = document.getElementById("pasted");
+    const extractedEl = document.getElementById("extracted");
+    const copyButton = document.getElementById("copyCombined");
+    const copyState = document.getElementById("copyState");
+
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    function encodeHiddenText(hiddenText) {
+      const bytes = encoder.encode(hiddenText);
+      let bits = "";
+      for (const byte of bytes) {
+        bits += byte.toString(2).padStart(8, "0");
+      }
+      let zeroWidth = "";
+      for (const bit of bits) {
+        zeroWidth += bit === "0" ? ZW0 : ZW1;
+      }
+      return MARKER + zeroWidth;
+    }
+
+    function decodeHiddenText(text) {
+      const markerIndex = text.indexOf(MARKER);
+      if (markerIndex < 0) return "";
+
+      const encodedPart = text.slice(markerIndex + MARKER.length);
+      const bitChars = Array.from(encodedPart).filter((ch) => ch === ZW0 || ch === ZW1);
+      if (!bitChars.length) return "";
+
+      const bitString = bitChars.map((ch) => (ch === ZW0 ? "0" : "1")).join("");
+      const fullBytesLength = Math.floor(bitString.length / 8) * 8;
+      const cleanBitString = bitString.slice(0, fullBytesLength);
+
+      const bytes = [];
+      for (let i = 0; i < cleanBitString.length; i += 8) {
+        bytes.push(Number.parseInt(cleanBitString.slice(i, i + 8), 2));
+      }
+
+      try {
+        return decoder.decode(new Uint8Array(bytes));
+      } catch {
+        return "";
+      }
+    }
+
+    function buildCombined() {
+      const visible = visibleEl.value;
+      const hidden = hiddenEl.value;
+      combinedEl.value = visible + encodeHiddenText(hidden);
+      copyState.textContent = "";
+    }
+
+    async function copyCombined() {
+      try {
+        await navigator.clipboard.writeText(combinedEl.value);
+        copyState.textContent = "Kopiert ✅";
+      } catch {
+        copyState.textContent = "Kopieren nicht möglich (Clipboard-Berechtigung fehlt).";
+      }
+    }
+
+    function extractFromPasted() {
+      extractedEl.value = decodeHiddenText(pastedEl.value);
+    }
+
+    visibleEl.addEventListener("input", buildCombined);
+    hiddenEl.addEventListener("input", buildCombined);
+    pastedEl.addEventListener("input", extractFromPasted);
+    copyButton.addEventListener("click", copyCombined);
+
+    buildCombined();
+  </script>
+</body>
+</html>
